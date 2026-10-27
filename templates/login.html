@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111b35"><title>Sign in · FlowGuard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-brand">
+      <a class="brand" href="{{ url_for('login') }}"><span class="brand-mark">F</span><span>FlowGuard<small>AICTE operations</small></span></a>
+      <div class="login-hero"><span class="hero-kicker">Approval operations, simplified</span><h1>Move every application forward with confidence.</h1><p>One calm workspace for applications, evaluation visits, compliance, and documents.</p><div class="hero-stat"><b>8</b><span>active demo applications<br>across 5 regions</span></div></div>
+    </section>
+    <section class="login-card">
+      <div class="login-card-head"><span class="login-icon">✦</span><div><h2>Welcome back</h2><p>Sign in to your demo workspace.</p></div></div>
+      <form method="post" action="{{ url_for('login', next=request.args.get('next','')) }}">
+        <label>Your name<input name="name" autocomplete="name" placeholder="e.g. Priya Nair" autofocus></label>
+        <label>Continue as<select name="role">{% for role in roles %}<option>{{ role }}</option>{% endfor %}</select></label>
+        <button class="primary wide" type="submit">Enter workspace <span>→</span></button>
+      </form>
+      <div class="login-note"><span>ⓘ</span><p>This is a local demo. No password or official AICTE connection is required.</p></div>
+    </section>
+  </main>
+</body>
+</html>

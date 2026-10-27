@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="welcome"><div><h2>Good {{ "morning" if current_hour < 12 else "afternoon" if current_hour < 18 else "evening" }}, {{ current_user.name }}</h2><p>Here’s the operational pulse across your approval workspace.</p></div><span class="muted">Last refreshed<br><b>{{ today }}</b></span></div>
+<div class="metric-grid">
+{% for key,label,tone in [('applications','Total applications','blue'),('active','In progress','purple'),('tasks','Pending tasks','amber'),('overdue','Overdue tasks','red'),('evc','EVC awaiting scheduling','green'),('compliance','Compliance due ≤7 days','teal')] %}
+<a class="metric {{ tone }}" href="{{ url_for('applications') }}"><span class="metric-icon"></span><strong>{{ stats[key] }}</strong><small>{{ label }}</small><em>View details →</em></a>
+{% endfor %}
+</div>
+<div class="section-head"><div><h3>Workspace overview</h3><span class="muted">Live demo metrics</span></div><a class="text-link" href="{{ url_for('reports') }}">Open reports →</a></div>
+<div class="overview-grid"><div class="panel"><div class="panel-title"><h3>Applications by stage</h3><span class="muted">Current pipeline</span></div>{% set max_count = stage_counts|map(attribute='n')|max|default(1) %}{% for row in stage_counts %}<div class="bar-row"><span>{{ row.stage }}</span><div><i style="width:{{ (row.n / max_count * 100)|round }}%"></i></div><b>{{ row.n }}</b></div>{% endfor %}</div>
+<div class="panel"><div class="panel-title"><h3>Upcoming action queue</h3><a class="text-link" href="{{ url_for('applications') }}">View all</a></div>{% for task in upcoming %}<div class="queue-row"><span class="status-dot {{ 'danger' if task.due < today else 'warning' }}"></span><div><b>{{ task.title }}</b><small>{{ task.application_id }} · {{ task.owner }}</small></div><time>{{ task.due }}</time></div>{% else %}<p class="muted">Nothing urgent.</p>{% endfor %}</div></div>
+<div class="panel activity"><div class="panel-title"><h3>Recent activity</h3><span class="muted">Latest workflow events</span></div>{% for item in activity %}<div class="activity-row"><span class="activity-icon">↗</span><div><b>{{ item.text }}</b><small>{{ item.application_id }} · {{ item.actor }}</small></div><time>{{ item.created }}</time></div>{% endfor %}</div>
+{% endblock %}
