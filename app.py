@@ -14,7 +14,7 @@ from flask import Flask, flash, g, redirect, render_template, request, session, 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE = BASE_DIR / "flowguard.db"
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "flowguard-local-demo-key"
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "flowguard-local-demo-key")
 
 STAGES = ["Draft", "Scrutiny", "Re-scrutiny", "EVC", "SAC/SHC", "Closed"]
 ROLES = ["System Administrator", "Institution User", "Regional Officer", "Bureau Officer", "EVC Coordinator", "Compliance Verifier", "Auditor"]
@@ -110,6 +110,16 @@ def init_db() -> None:
     db.close()
 
 
+init_db()
+
+
+def safe_redirect_target(target: str | None) -> str:
+    """Only allow login redirects to local application paths."""
+    if target and target.startswith("/") and not target.startswith("//"):
+        return target
+    return url_for("dashboard")
+
+
 @app.context_processor
 def inject_globals():
     return {
@@ -123,7 +133,7 @@ def inject_globals():
 
 @app.before_request
 def require_login():
-    if request.endpoint not in {"login", "static"} and "user" not in session:
+    if request.endpoint not in {"login", "static", "health"} and "user" not in session:
         return redirect(url_for("login", next=request.full_path))
 
 
@@ -135,7 +145,7 @@ def login():
         if role not in ROLES:
             role = ROLES[0]
         session["user"] = {"name": name[:60], "role": role}
-        destination = request.args.get("next") or url_for("dashboard")
+        destination = safe_redirect_target(request.args.get("next"))
         return redirect(destination)
     if "user" in session:
         return redirect(url_for("dashboard"))
@@ -183,9 +193,26 @@ def applications():
 @app.route("/applications/new", methods=["POST"])
 def create_application():
     form = request.form
+    institution = form.get("institution", "").strip()
+    application_type = form.get("type", "").strip()
+    region = form.get("region", "").strip()
+    due = form.get("due", "").strip()
+    if not institution or application_type not in {
+        "New Institution",
+        "Increase in Intake",
+        "New Course",
+        "Extension of Approval",
+    } or region not in REGIONS:
+        flash("Enter a valid institution, application type, and region.", "error")
+        return redirect(url_for("applications"))
+    try:
+        datetime.strptime(due, "%Y-%m-%d")
+    except ValueError:
+        flash("Enter a valid due date.", "error")
+        return redirect(url_for("applications"))
     app_id = f"FG-{date.today().year}-{query('SELECT COUNT(*) n FROM applications', one=True)['n'] + 101}"
     db = get_db()
-    db.execute("INSERT INTO applications VALUES (?,?,?,?,?,?,?,?,?)", (app_id, form["institution"], form["type"], form["region"], "Draft", "Draft", "Unassigned", today(), form["due"]))
+    db.execute("INSERT INTO applications VALUES (?,?,?,?,?,?,?,?,?)", (app_id, institution, application_type, region, "Draft", "Draft", "Unassigned", today(), due))
     db.execute("INSERT INTO activity(application_id,actor,text,created) VALUES (?,?,?,?)", (app_id, "System Administrator", "Draft application created", today()))
     db.commit()
     flash(f"{app_id} created successfully.", "success")
@@ -251,6 +278,12 @@ def export_csv():
     writer.writerow(["Application", "Institution", "Type", "Region", "Stage", "Status", "Due"])
     writer.writerows(query("SELECT id,institution,type,region,stage,status,due FROM applications"))
     return app.response_class(output.getvalue(), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=flowguard-applications.csv"})
+
+
+@app.get("/health")
+def health():
+    query("SELECT 1", one=True)
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":
