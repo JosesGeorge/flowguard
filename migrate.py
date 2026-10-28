@@ -1,7 +1,7 @@
 """
 FlowGuard database migration script.
 
-Run once to add the users and audit_log tables.
+Run once to add the users, audit_log, and workflow_transitions tables.
 Idempotent: safe to run multiple times.
 Never deletes existing data.
 
@@ -48,6 +48,20 @@ def migrate() -> None:
             metadata        TEXT    DEFAULT NULL,
             reason          TEXT    DEFAULT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS workflow_transitions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            application_id  TEXT NOT NULL,
+            actor_id        INTEGER DEFAULT NULL,
+            actor_username  TEXT NOT NULL,
+            action          TEXT NOT NULL,
+            from_stage      TEXT NOT NULL,
+            to_stage        TEXT NOT NULL,
+            from_status     TEXT NOT NULL,
+            to_status       TEXT NOT NULL,
+            reason          TEXT DEFAULT NULL,
+            created_at      TEXT NOT NULL
+        );
     """)
 
     db.commit()
@@ -58,4 +72,3 @@ def migrate() -> None:
 
 if __name__ == "__main__":
     migrate()
-

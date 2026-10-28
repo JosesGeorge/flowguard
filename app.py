@@ -25,6 +25,9 @@ from auth import (
     ALL_ROLES,
     PERM_APPLICATIONS_ADVANCE,
     PERM_APPLICATIONS_CREATE,
+    PERM_APPLICATIONS_CORRECTION,
+    PERM_APPLICATIONS_HOLD,
+    PERM_APPLICATIONS_REJECT,
     PERM_APPLICATIONS_VIEW_ALL,
     PERM_APPLICATIONS_VIEW_OWN,
     PERM_APPLICATIONS_VIEW_REGION,
@@ -55,6 +58,7 @@ from auth import (
     require_permission,
     validate_csrf_token,
 )
+from workflow import ACTION_LABELS, REASON_REQUIRED_ACTIONS, resolve_transition
 
 # ---------------------------------------------------------------------------
 # Application setup
@@ -217,6 +221,19 @@ def init_db() -> None:
             metadata        TEXT    DEFAULT NULL,
             reason          TEXT    DEFAULT NULL
         );
+        CREATE TABLE IF NOT EXISTS workflow_transitions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            application_id  TEXT NOT NULL,
+            actor_id        INTEGER DEFAULT NULL,
+            actor_username  TEXT NOT NULL,
+            action          TEXT NOT NULL,
+            from_stage      TEXT NOT NULL,
+            to_stage        TEXT NOT NULL,
+            from_status     TEXT NOT NULL,
+            to_status       TEXT NOT NULL,
+            reason          TEXT DEFAULT NULL,
+            created_at      TEXT NOT NULL
+        );
     """)
 
     # Seed demo data only if no applications exist
@@ -320,6 +337,9 @@ def inject_globals():
         "has_permission": has_permission,
         "PERM_APPLICATIONS_CREATE": PERM_APPLICATIONS_CREATE,
         "PERM_APPLICATIONS_ADVANCE": PERM_APPLICATIONS_ADVANCE,
+        "PERM_APPLICATIONS_CORRECTION": PERM_APPLICATIONS_CORRECTION,
+        "PERM_APPLICATIONS_HOLD": PERM_APPLICATIONS_HOLD,
+        "PERM_APPLICATIONS_REJECT": PERM_APPLICATIONS_REJECT,
         "PERM_REPORTS_EXPORT": PERM_REPORTS_EXPORT,
         "PERM_USERS_VIEW": PERM_USERS_VIEW,
         "PERM_AUDIT_VIEW": PERM_AUDIT_VIEW,
@@ -646,8 +666,18 @@ def application_detail(app_id: str):
 
     tasks = query("SELECT * FROM tasks WHERE application_id=?", (app_id,))
     activity = query("SELECT * FROM activity WHERE application_id=? ORDER BY id DESC", (app_id,))
+    transitions = query(
+        "SELECT * FROM workflow_transitions WHERE application_id=? ORDER BY id DESC",
+        (app_id,),
+    )
     return render_template(
-        "application.html", title=app_id, record=record, tasks=tasks, activity=activity
+        "application.html",
+        title=app_id,
+        record=record,
+        tasks=tasks,
+        activity=activity,
+        transitions=transitions,
+        workflow_actions=ACTION_LABELS,
     )
 
 
@@ -655,6 +685,10 @@ def application_detail(app_id: str):
 @csrf_protect
 @require_permission(PERM_APPLICATIONS_ADVANCE)
 def advance_application(app_id: str):
+    return transition_application(app_id, default_action="advance")
+
+
+def transition_application(app_id: str, default_action: str | None = None):
     user = get_current_user()
     record = query("SELECT * FROM applications WHERE id=?", (app_id,), one=True)
     if not record:
@@ -673,39 +707,100 @@ def advance_application(app_id: str):
     elif scope_clause == "1=0":
         abort(403)
 
-    if record["status"] == "Completed":
-        flash("This application cannot be advanced — it is already closed.", "error")
+    action = default_action or request.form.get("action", "").strip()
+    reason = request.form.get("reason", "").strip()
+    if action in REASON_REQUIRED_ACTIONS and len(reason) < 10:
+        flash("Provide a reason of at least 10 characters for this workflow action.", "error")
+        return redirect(url_for("application_detail", app_id=app_id))
+
+    try:
+        transition = resolve_transition(STAGES, record["stage"], record["status"], action)
+    except ValueError as exc:
+        flash(str(exc), "error")
         audit(
-            "application.advance",
+            "application.transition",
             entity_type="application",
             entity_id=app_id,
             outcome="failure",
-            metadata={"reason": "already completed"},
+            metadata={"action": action},
+            reason=reason or str(exc),
         )
         return redirect(url_for("application_detail", app_id=app_id))
 
-    current_idx = STAGES.index(record["stage"])
-    next_stage = STAGES[min(current_idx + 1, len(STAGES) - 1)]
-    new_status = "Completed" if next_stage == "Closed" else "In Progress"
     actor_name = user["username"]
+    transition_reason = reason or "Authorized workflow advancement."
+    now = datetime.now(timezone.utc).isoformat()
 
     db = get_db()
-    db.execute("UPDATE applications SET stage=?, status=? WHERE id=?", (next_stage, new_status, app_id))
+    db.execute(
+        "UPDATE applications SET stage=?, status=? WHERE id=?",
+        (transition.to_stage, transition.status, app_id),
+    )
     db.execute(
         "INSERT INTO activity(application_id,actor,text,created) VALUES (?,?,?,?)",
-        (app_id, actor_name, f"Moved workflow to {next_stage}", today()),
+        (
+            app_id,
+            actor_name,
+            f"{ACTION_LABELS[action]}: {record['stage']} -> {transition.to_stage}",
+            today(),
+        ),
+    )
+    db.execute(
+        """
+        INSERT INTO workflow_transitions
+        (application_id, actor_id, actor_username, action, from_stage, to_stage,
+         from_status, to_status, reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            app_id,
+            user["id"],
+            actor_name,
+            action,
+            transition.from_stage,
+            transition.to_stage,
+            record["status"],
+            transition.status,
+            transition_reason,
+            now,
+        ),
     )
     db.commit()
 
     audit(
-        "application.advance",
+        "application.transition",
         entity_type="application",
         entity_id=app_id,
         outcome="success",
-        metadata={"from_stage": record["stage"], "to_stage": next_stage, "new_status": new_status},
+        metadata={
+            "action": action,
+            "from_stage": record["stage"],
+            "to_stage": transition.to_stage,
+            "from_status": record["status"],
+            "to_status": transition.status,
+        },
+        reason=transition_reason,
     )
-    flash("Workflow updated.", "success")
+    flash(f"{ACTION_LABELS[action]} completed.", "success")
     return redirect(url_for("application_detail", app_id=app_id))
+
+
+@app.route("/applications/<app_id>/transition", methods=["POST"])
+@csrf_protect
+def application_transition(app_id: str):
+    action = request.form.get("action", "").strip()
+    permission_by_action = {
+        "advance": PERM_APPLICATIONS_ADVANCE,
+        "request_correction": PERM_APPLICATIONS_CORRECTION,
+        "hold": PERM_APPLICATIONS_HOLD,
+        "resume": PERM_APPLICATIONS_ADVANCE,
+        "resubmit": PERM_APPLICATIONS_ADVANCE,
+        "reject": PERM_APPLICATIONS_REJECT,
+    }
+    permission = permission_by_action.get(action)
+    if permission is None:
+        abort(400, description="Unsupported workflow action.")
+    return require_permission(permission)(transition_application)(app_id)
 
 
 # ---------------------------------------------------------------------------

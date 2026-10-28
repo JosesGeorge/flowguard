@@ -16,7 +16,7 @@ approval-management product without handling real institutional records.
 
 > **Current maturity:** security-hardened Flask foundation with SQLite
 > persistence, server-side RBAC, session controls, CSRF protection, structured
-> audit events, administration tooling, and a 42-test security regression suite.
+> audit events, administration tooling, and a 46-test security regression suite.
 > Several domain capabilities are intentionally represented as read-only
 > operational views and are planned for the next product phases.
 
@@ -90,7 +90,7 @@ The core design principle is simple:
 
 ### Quality baseline
 
-- 42 automated tests currently passing
+- 46 automated tests currently passing
 - Authentication and session regression coverage
 - CSRF rejection and acceptance tests
 - Role and permission enforcement tests
@@ -130,10 +130,43 @@ An application record currently includes:
 - Submission date
 - Due date
 
-The next workflow evolution should replace the simple “advance to next stage”
-operation with an explicit transition engine supporting approve, return,
-request-correction, hold, reject, resubmit, and close actions with mandatory
-reasons and stage-specific validation.
+FlowGuard now extends the linear stage track with an explicit transition
+engine supporting advance, return-for-correction, hold, resume, reject, and
+resubmit actions. Approval-specific and stage-specific validation rules remain
+part of the next workflow milestone.
+
+### Governed workflow engine
+
+The first production-oriented workflow module is now implemented in
+`workflow.py`. State-changing actions are validated centrally rather than
+being treated as arbitrary database updates.
+
+Supported actions:
+
+| Action | Behavior | Reason |
+|---|---|---|
+| Advance workflow | Move to the next configured stage | Optional |
+| Request correction | Return the application to the institution/review queue | Required |
+| Place on hold | Pause the current review without losing the stage | Required |
+| Resume review | Resume an application that is on hold | Required |
+| Resubmit | Move a returned application back into active review | Required |
+| Reject | Close the application with a rejected outcome | Required |
+
+Each successful transition records:
+
+- Application and actor
+- Source and destination stage
+- Source and destination status
+- Action name
+- Human-readable reason
+- UTC timestamp
+- Operational activity entry
+- Structured audit event
+
+The transition history is displayed on the application detail page and is
+protected by the same scope and permission checks as the application itself.
+Auditors remain read-only, while bureau officers and administrators receive
+the governed actions appropriate to their roles.
 
 ---
 
@@ -205,12 +238,13 @@ SQLite database (flowguard.db)
 |---|---|
 | `app.py` | Flask application, routes, database access, workflow actions, audit calls |
 | `auth.py` | Roles, permissions, session validation, CSRF, authorization decorators |
+| `workflow.py` | Central workflow actions, state validation, and transition outcomes |
 | `migrate.py` | Idempotent creation of security-related tables |
 | `manage.py` | CLI for creating and listing user accounts |
 | `templates/` | Jinja pages for workspace, administration, and error states |
 | `static/app.css` | Shared visual design system and responsive layout |
 | `static/app.js` | Modal behavior and small client-side interactions |
-| `tests/test_security.py` | Authentication, authorization, CSRF, session, and audit tests |
+| `tests/test_security.py` | Authentication, authorization, CSRF, session, workflow, and audit tests |
 | `flowguard.db` | Local development database; ignored by Git |
 
 ---
@@ -272,7 +306,7 @@ automatically selects the next available local port if that port is busy.
 Expected baseline:
 
 ```text
-42 passed
+46 passed
 ```
 
 ---

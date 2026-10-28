@@ -482,3 +482,124 @@ class TestAuthModule:
             w in p for w in ("create", "update", "deactivate", "upload", "advance", "assign", "manage", "toggle", "schedule")
         )}
         assert write_perms == set(), f"Auditor has unexpected write permissions: {write_perms}"
+
+
+class TestGovernedWorkflow:
+    def _login_as(self, app, client, role, username):
+        user = create_test_user(app, username=username, role=role)
+        login(client, username, user["password"])
+        with client.session_transaction() as sess:
+            sess["csrf_token"] = "test-csrf"
+
+    def _seed_application(self, app, app_id="WF-001", stage="Scrutiny", status="In Progress"):
+        import app as app_module
+
+        db = sqlite3.connect(app_module.DATABASE)
+        db.execute(
+            "INSERT INTO applications VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                app_id,
+                "Workflow Institute",
+                "New Course",
+                "Northern",
+                stage,
+                status,
+                "Officer",
+                "2026-01-01",
+                "2026-12-31",
+            ),
+        )
+        db.commit()
+        db.close()
+        return app_id
+
+    def test_request_correction_requires_a_reason(self, app, client):
+        self._login_as(app, client, "bureau_officer", username="workflow_reason")
+        app_id = self._seed_application(app)
+
+        response = client.post(
+            f"/applications/{app_id}/transition",
+            data={"action": "request_correction", "reason": "", "csrf_token": "test-csrf"},
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        assert b"minimum 10 characters" in response.data
+        import app as app_module
+        db = sqlite3.connect(app_module.DATABASE)
+        row = db.execute("SELECT status FROM applications WHERE id=?", (app_id,)).fetchone()
+        db.close()
+        assert row[0] == "In Progress"
+
+    def test_valid_transition_records_state_and_reason(self, app, client):
+        self._login_as(app, client, "bureau_officer", username="workflow_actor")
+        app_id = self._seed_application(app)
+
+        response = client.post(
+            f"/applications/{app_id}/transition",
+            data={
+                "action": "request_correction",
+                "reason": "Missing faculty appointment evidence.",
+                "csrf_token": "test-csrf",
+            },
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        assert b"Request correction completed" in response.data
+        import app as app_module
+        db = sqlite3.connect(app_module.DATABASE)
+        application = db.execute(
+            "SELECT stage, status FROM applications WHERE id=?", (app_id,)
+        ).fetchone()
+        transition = db.execute(
+            "SELECT action, from_stage, to_stage, from_status, to_status, reason "
+            "FROM workflow_transitions WHERE application_id=?",
+            (app_id,),
+        ).fetchone()
+        db.close()
+        assert tuple(application) == ("Scrutiny", "Returned")
+        assert tuple(transition) == (
+            "request_correction",
+            "Scrutiny",
+            "Scrutiny",
+            "In Progress",
+            "Returned",
+            "Missing faculty appointment evidence.",
+        )
+
+    def test_returned_application_can_be_resubmitted(self, app, client):
+        self._login_as(app, client, "bureau_officer", username="workflow_resubmit")
+        app_id = self._seed_application(app, status="Returned")
+
+        response = client.post(
+            f"/applications/{app_id}/transition",
+            data={
+                "action": "resubmit",
+                "reason": "All requested evidence has been submitted.",
+                "csrf_token": "test-csrf",
+            },
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        import app as app_module
+        db = sqlite3.connect(app_module.DATABASE)
+        row = db.execute("SELECT status FROM applications WHERE id=?", (app_id,)).fetchone()
+        db.close()
+        assert row[0] == "In Progress"
+
+    def test_auditor_cannot_request_correction(self, app, client):
+        self._login_as(app, client, "auditor", username="workflow_auditor")
+        app_id = self._seed_application(app)
+
+        response = client.post(
+            f"/applications/{app_id}/transition",
+            data={
+                "action": "request_correction",
+                "reason": "This should not be allowed.",
+                "csrf_token": "test-csrf",
+            },
+        )
+
+        assert response.status_code == 403
