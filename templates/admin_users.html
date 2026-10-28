@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-intro"><div><h2>User management</h2><p>Manage FlowGuard accounts and role assignments.</p></div>{% if has_permission(current_user, PERM_USERS_CREATE) %}<button class="primary" data-modal="new-user">＋ New user</button>{% endif %}</div>
+<div class="panel table-panel"><table><thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Region</th><th>Status</th><th>Created</th><th>Last login</th><th></th></tr></thead><tbody>
+{% for u in users %}
+<tr>
+  <td>{{ u.id }}</td>
+  <td><b>{{ u.username }}</b></td>
+  <td>{{ role_labels.get(u.role, u.role) }}</td>
+  <td>{{ u.region or 'All' }}</td>
+  <td><span class="badge {{ 'in-progress' if u.is_active else 'returned' }}">{{ 'Active' if u.is_active else 'Inactive' }}</span></td>
+  <td>{{ u.created_at[:10] }}</td>
+  <td>{{ u.last_login[:10] if u.last_login else 'Never' }}</td>
+  <td>
+    {% if has_permission(current_user, PERM_USERS_DEACTIVATE) and u.is_active and u.id != current_user.id %}
+    <form method="post" action="{{ url_for('admin_deactivate_user', user_id=u.id) }}" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="secondary" onclick="return confirm('Deactivate {{ u.username }}?')">Deactivate</button>
+    </form>
+    {% elif has_permission(current_user, PERM_USERS_UPDATE) and not u.is_active %}
+    <form method="post" action="{{ url_for('admin_activate_user', user_id=u.id) }}" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="secondary">Activate</button>
+    </form>
+    {% endif %}
+  </td>
+</tr>
+{% else %}
+<tr><td colspan="8" class="empty">No user accounts found.</td></tr>
+{% endfor %}
+</tbody></table></div>
+
+{% if has_permission(current_user, PERM_USERS_CREATE) %}
+<div class="modal" id="new-user"><form method="post" action="{{ url_for('admin_create_user') }}" class="modal-card"><button type="button" class="modal-close">×</button><h2>Create user account</h2><p class="muted">New accounts can sign in immediately.</p><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>Username<input name="username" required placeholder="e.g. priya.nair" autocomplete="off"></label><label>Password<input name="password" type="password" required placeholder="Min 10 characters" autocomplete="new-password"></label><label>Role<select name="role">{% for role in all_roles %}<option value="{{ role }}">{{ role_labels.get(role, role) }}</option>{% endfor %}</select></label><label>Region (optional)<select name="region"><option value="">All regions</option>{% for r in regions %}<option value="{{ r }}">{{ r }}</option>{% endfor %}</select></label><button class="primary wide">Create account</button></form></div>
+{% endif %}
+{% endblock %}
+

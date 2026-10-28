@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-intro"><div><h2>{{ heading }}</h2><p>{{ subtitle }}</p></div></div>
+<div class="panel table-panel"><table><thead><tr>{% for head in headers %}<th>{{ head }}</th>{% endfor %}</tr></thead><tbody>{% for row in rows %}<tr>{% for value in row %}<td>{{ value }}</td>{% endfor %}</tr>{% else %}<tr><td colspan="{{ headers|length }}" class="empty">No records available.</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

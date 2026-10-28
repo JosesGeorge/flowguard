@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="error-page">
+  <div class="error-code">403</div>
+  <h2>Access denied</h2>
+  <p class="muted">You do not have permission to view this page. If you believe this is a mistake, contact your system administrator.</p>
+  <a class="primary" href="{{ url_for('dashboard') }}">← Back to dashboard</a>
+</div>
+{% endblock %}
+
